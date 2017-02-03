@@ -1,0 +1,621 @@
+---
+title: "Project1Markdown"
+author: "Hongyi Zhu"
+date: "January 29, 2017"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+# Text Mining on Presidential Inauguration Speeches
+
+Presidential inauguration often mark a beginning of an era. As a result, the speeches given at inauguration have been carefully preserved and extensively analyzed. It is my intention to analyze this body of documents with text mining techniques available in R,  and to identify any interesting patterns that arise. Using the all speeches, I have analyzed word length, word frequency, performed topic modeling, and attempted to identify trends in the word usage by utilizing tools such as term-document matrix, LDA, and the various plot mechanisms in R.
+
+
+
+
+
+```{r  message=FALSE}
+# ======================Loading required libraries======================
+
+library(tm)
+library(wordcloud)
+library(dplyr)
+library(tidytext)
+library(cluster)
+library(ggplot2)
+library(qdap)
+library(topicmodels)
+library(magrittr)
+library(showtext)
+library(quanteda)
+library(tidyverse)
+library(scales)
+library(stringr)
+library(viridis)
+library(grid)
+library(testthat)
+```
+
+
+
+```{r }
+# ======================Reading in data and setting up corpus======================
+
+# Relative path points to the local folder
+folder.path="../data/InauguralSpeeches/"
+
+# get the list of file names
+speeches=list.files(path = folder.path, pattern = "*.txt")
+
+# Truncate file names so it is only showing "FirstLast-Term"
+prez.out=substr(speeches, 6, nchar(speeches)-4)
+
+# Create a vector NA's equal to the length of the number of speeches
+length.speeches=rep(NA, length(speeches))
+
+# Create a corpus
+ff.all<-Corpus(DirSource(folder.path))
+
+# load the inauguration list and date
+inauguration.list=read.csv("../data/InaugurationInfo.csv")
+
+```
+
+
+
+
+
+
+
+```{r}
+
+# ======================Clean the data======================
+
+# Use tm_map to strip all white spaces to a single space, to lower case case, remove stop words, empty strings and punctuation.
+ff.all<-tm_map(ff.all, stripWhitespace)
+ff.all<-tm_map(ff.all, content_transformer(tolower))
+ff.all<-tm_map(ff.all, removeWords, stopwords("english"))
+ff.all<-tm_map(ff.all, removeWords, c("", "can", "may", "upon", "shall", "will", "must", "never","without", "well", "among", "much", "many", "less", "long", "every", "within", "even", "take", "part", "let", "still", "however", "but"))
+
+# Replace the words that are similar in meaning with one word
+ff.all<-tm_map(ff.all, content_transformer(function(x) gsub(x, pattern = "freedom", replacement = "free")))
+ff.all<-tm_map(ff.all, content_transformer(function(x) gsub(x, pattern = "american", replacement = "america")))
+ff.all<-tm_map(ff.all, content_transformer(function(x) gsub(x, pattern = "national", replacement = "nation")))
+ff.all<-tm_map(ff.all, content_transformer(function(x) gsub(x, pattern = "nations", replacement = "nation")))
+ff.all<-tm_map(ff.all, content_transformer(function(x) gsub(x, pattern = "states", replacement = "state")))
+ff.all<-tm_map(ff.all, content_transformer(function(x) gsub(x, pattern = "good", replacement = "best")))
+ff.all<-tm_map(ff.all, content_transformer(function(x) gsub(x, pattern = "rights", replacement = "right")))
+# ff.all<-tm_map(ff.all, content_transformer(function(x) gsub(x, pattern = "country", replacement = "nation")))
+ff.all<-tm_map(ff.all, content_transformer(function(x) gsub(x, pattern = "citizens", replacement = "citizen")))
+ff.all<-tm_map(ff.all, content_transformer(function(x) gsub(x, pattern = "made", replacement = "create")))
+ff.all<-tm_map(ff.all, content_transformer(function(x) gsub(x, pattern = "make", replacement = "create")))
+ff.all<-tm_map(ff.all, content_transformer(function(x) gsub(x, pattern = "justice", replacement = "just")))
+ff.all<-tm_map(ff.all, content_transformer(function(x) gsub(x, pattern = " men ", replacement = "people")))
+ff.all<-tm_map(ff.all, content_transformer(function(x) gsub(x, pattern = " americas ", replacement = "america")))
+ff.all<-tm_map(ff.all, content_transformer(function(x) gsub(x, pattern = " lives ", replacement = "live")))
+ff.all<-tm_map(ff.all, content_transformer(function(x) gsub(x, pattern = " laws ", replacement = "law")))
+
+
+# Replace dash (-) with space
+toSpace<-content_transformer((function(x,pattern) gsub(pattern, " ", x)))
+ff.all<-tm_map(ff.all, toSpace, "-|/")
+ff.all<-tm_map(ff.all, removePunctuation)
+ff.all<-tm_map(ff.all,removeNumbers)
+
+# tdm.all =  a Term Document Matrix
+tdm.all<-TermDocumentMatrix(ff.all)
+tdm.all=removeSparseTerms(tdm.all,0.99)
+dtm.all=DocumentTermMatrix(ff.all)
+```
+
+
+
+
+```{r }
+# ======================Convert corpus to data frame======================
+
+# Tokenize the corpus
+myCorpusTokenized <- lapply(ff.all, scan_tokenizer)
+# concatenate tokens by document, create data frame
+myDf <- data.frame(text = sapply(myCorpusTokenized, paste, collapse = " "), stringsAsFactors = FALSE)
+myDf <- cbind(inauguration.list,myDf)
+myDf[] <- lapply(myDf, as.character)
+myDf=myDf[with(myDf, order(Dates)),]
+
+```
+
+
+
+
+```{r }
+#============ Create data frames consist of the earlier, latter, Democratic, and republican halves of the speeches===========
+
+# Earlier means on and before 03/04/1897, the inauguration date of William McKinley
+# the earlier half of speeches into a new corpus
+firstHalf=myDf$text[1]
+for (i in seq((nrow(myDf)/2)-2))
+{
+  temp=myDf$text[i+1]
+  firstHalf=rbind(firstHalf,temp)
+}
+firstHalf.corpus = Corpus(DataframeSource(firstHalf))
+
+# the later half of speeches into a new corpus
+secondHalf=myDf$text[nrow(myDf)/2]
+for (i in seq(from=(nrow(myDf)/2+1), to=nrow(myDf)-1))
+{
+  temp=myDf$text[i+1]
+  secondHalf=rbind(secondHalf,temp)
+}
+secondHalf.corpus=Corpus(DataframeSource(secondHalf))
+
+
+# the Republican half
+repub=myDf$text[nrow(myDf)]
+for (i in seq(nrow(myDf)))
+{
+  if(is.na(myDf$Party[i]))
+  {
+    myDf$Party[i]="No Party"
+  }
+  
+  if((myDf$Party[i]=="Republican"))
+  {
+    temp=myDf$text[i]  
+    repub=rbind(repub,temp)
+  }
+}
+
+repub.corpus=Corpus(DataframeSource(repub))
+
+
+
+# the Democratic half
+democ=myDf$text[nrow(myDf)]
+for (i in seq(nrow(myDf)))
+{
+  if(is.na(myDf$Party[i]))
+  {
+    myDf$Party[i]="No Party"
+  }
+  
+  if((myDf$Party[i]=="Democratic"))
+  {
+    temp=myDf$text[i]  
+    democ=rbind(democ,temp)
+  }
+}
+
+democ.corpus=Corpus(DataframeSource(democ))
+
+tdm.firstHalf=TermDocumentMatrix(firstHalf.corpus)
+tdm.secondHalf=TermDocumentMatrix(secondHalf.corpus)
+
+
+dtm.firstHalf=DocumentTermMatrix(firstHalf.corpus)
+dtm.secondHalf=DocumentTermMatrix(secondHalf.corpus)
+
+
+tdm.repub=TermDocumentMatrix(repub.corpus)
+tdm.democ=TermDocumentMatrix(democ.corpus)
+
+
+dtm.repub=DocumentTermMatrix(repub.corpus)
+dtm.democ=DocumentTermMatrix(democ.corpus)
+
+
+
+```
+
+
+
+# Barplot of the most Frequent Words
+
+I have split the speeches into two intervals chronologically: [1789-1897] and (1897-2017], where 1897 is the inauguration date of William McKinley. Doing so, I hope to examine the most frequent words spoken in each time period. I have a theory that the earlier Presidents are more sensitive and concerned about the Constitution, while the latter Presidents have much more to worry about and thus placed a lesser emphasis on the Consitutiton. After the analysis, it seems to be the case judging from the barplot of the most frequent words: the word "constitution" does not make the cut to be on the most frequent words plot from the latter speeches with the same frequency threshold. A more detailed version of the plots are available in the Output folder. 
+
+
+```{r }
+#======================
+
+# Bar Plot for all speeches
+termFrequency <- rowSums(as.matrix(tdm.all))
+termFrequency <- subset(termFrequency, termFrequency>=250)
+termFrequency = sort(termFrequency, decreasing=FALSE)
+
+
+#png(paste("../output/", "MostCommonWords", ".png", sep=""), width=1500, height=1000)
+ par(mar=c(5,9,5,5)+1, mgp=c(5,1,0))
+  barplot(termFrequency, horiz=TRUE, las=1, xlab="Count", ylab="Word", main="Most Frequent Words: Entire Corpus", cex.lab=2, cex.main=1, cex.axis=2)
+#dev.off()
+
+```
+
+
+It seems that the earlier presidents are more concerned about the newly found union and placed a strong emphasis on the legitamcy of its foundation---by the people, and for the people---and the greatness that it will inherit and achieve in the future. "We shall inherit the earth!!!" kind of tone.
+```{r }
+termFrequency <- rowSums(as.matrix(tdm.firstHalf))
+termFrequency <- subset(termFrequency, termFrequency>=125)
+termFrequency = sort(termFrequency, decreasing=FALSE)
+  
+#png(paste("../output/", "MostCommonWords.firstHalf", ".png", sep=""), width=1500, height=1000)
+ par(mar=c(5,9,5,5)+1, mgp=c(5,1,0))
+  barplot(termFrequency, horiz=TRUE, las=1, xlab="Count", ylab="Word", main="Most Frequent Words: Earlier Half", cex.lab=2, cex.main=1, cex.axis=2)
+#dev.off()
+```
+
+
+After a century or so, Presidents seem to be concerned about the role the United States plays in the world. There were a couple of major "wars"" in the last century that the presidents explicitly mentioned in their inaugurations: WWI, WWII, Korean War, Vietnam War. As a result, achieving "peace"" became a priority on the agenda of the Presidents, and that "Constitution" took a back seat by not making to this list---nor is it on the more detailed list with frequency threshold of >75. 
+```{r }
+termFrequency <- rowSums(as.matrix(tdm.secondHalf))
+termFrequency <- subset(termFrequency, termFrequency>=125)
+termFrequency = sort(termFrequency, decreasing=FALSE)
+  
+#png(paste("../output/", "MostCommonWords.secondtHalf", ".png", sep=""), width=1500, height=1000)
+  par(mar=c(5,9,5,5)+1, mgp=c(5,1,0))
+  barplot(termFrequency, horiz=TRUE, las=1, xlab="Count", ylab="Word", main="Most Frequent Words: Latter Half",    cex.lab=2, cex.main=1, cex.axis=2)
+#dev.off()
+  
+
+
+
+  
+
+```
+
+# Word Length
+
+I have a hypothesis (stolen from my English class that bashes modern writers and pop cultures) that there is a downward trend in word length as exemplified by our texting abbreviations and sound bites on Television. 
+
+
+```{r }
+# Overall
+words <- dtm.all %>% colnames%>% (function(x) x[nchar(x)<20])
+dist_tab(nchar(words))
+
+data.frame(nletters=nchar(words)) %>%
+  ggplot(aes(x=nletters)) +
+  geom_histogram(binwidth = 1) +
+  geom_vline(xintercept=mean(nchar(words)), 
+             colour="green", size=1, alpha=0.5) +
+  labs(x="Word Length", y="Frequency")
+
+
+```
+
+After the analysis, I have calculated the distribution of length of words in these inauguration speeches. Sample size, their  mean, and standard deviation for word length of the earlier and latter speeches are: **6270** words with a mean of **8.060606** and standard deviation of **2.516716** and **6220** words with a mean of **7.694534** and a standard deviation of **2.521227** respectively. Assuming equal variance (a somewhat plausible assumption), a simple t-test: yields a p-value of 5.069e-16. In other words, **I was able to reject the hypothesis that the word lengths stayed the same**, and conclude that the words have became shorter since the 1897 McKinley inauguration. 
+```{r }
+# First Half
+words <- dtm.firstHalf %>% colnames%>% (function(x) x[nchar(x)<20])
+dist_tab(nchar(words))
+
+data.frame(nletters=nchar(words)) %>%
+  ggplot(aes(x=nletters)) +
+  geom_histogram(binwidth = 1) +
+  geom_vline(xintercept=mean(nchar(words)), 
+             colour="green", size=1, alpha=0.5) +
+  labs(x="Word Length: Earlier Half", y="Frequency")
+  firstHalf.count=nchar(words)
+
+  # Second Half
+words <- dtm.secondHalf %>% colnames%>% (function(x) x[nchar(x)<20])
+dist_tab(nchar(words))
+
+data.frame(nletters=nchar(words)) %>%
+  ggplot(aes(x=nletters)) +
+  geom_histogram(binwidth = 1) +
+  geom_vline(xintercept=mean(nchar(words)), 
+             colour="green", size=1, alpha=0.5) +
+  labs(x="Word Length: Later Half", y="Frequency")
+  secondHalf.count=nchar(words)
+```
+
+Here is the result from the two sample t-test assuming equal variance of the hypothesis that the word length stayed constant from the earlier half to the later half.
+```{r }
+  t.test(firstHalf.count, secondHalf.count, var.equal = TRUE, paired=FALSE)
+```
+
+
+On the other hand, the Democrat vs. Republican split offers much less insight and is only included to make that point.
+```{r }
+# Democrat
+words <- dtm.democ %>% colnames%>% (function(x) x[nchar(x)<20])
+dist_tab(nchar(words))
+
+data.frame(nletters=nchar(words)) %>%
+  ggplot(aes(x=nletters)) +
+  geom_histogram(binwidth = 1) +
+  geom_vline(xintercept=mean(nchar(words)), 
+             colour="green", size=1, alpha=0.5) +
+  labs(x="Democrat Word Length", y="Frequency")
+
+# Republican
+words <- dtm.repub %>% colnames%>% (function(x) x[nchar(x)<20])
+dist_tab(nchar(words))
+
+data.frame(nletters=nchar(words)) %>%
+  ggplot(aes(x=nletters)) +
+  geom_histogram(binwidth = 1) +
+  geom_vline(xintercept=mean(nchar(words)), 
+             colour="green", size=1, alpha=0.5) +
+  labs(x="Republican Word Length", y="Frequency")
+
+```
+
+
+
+
+# Clustering
+
+I have removed sparse terms so that the sparsity for the overall, earlier half, latter half are 0.25, 0.15, and 0.15 respectively. Clustering is a technique for the machine to classify and group objects that are of similar nature. These clusters show the words that often appear together or make sense when used together. For example, "hope" and "future" goes together to promote the optimistic view of the future, "world" and "peace" go together as the Presidents would like to achieve peace worldwide. Lastly, "just" and "best" are together because the Presidents would like people to believe that their policy is fair, and therefore just, and is best. 
+The more detailed (made from less sparse matrices) cluster diagram are available in the output folder. 
+
+```{r warning=FALSE}
+# all
+dtms <- removeSparseTerms(dtm.all,0.25)
+d=dist(t(dtms), method="euclidian")
+fit<-hclust(d=d,method="ward.D")
+
+#png(paste("../output/", "Cluster Dendrogram", ".png", sep=""), width=1500, height=1000)
+  nodePar <- list(lab.cex = 1, pch = c(NA, 19), cex = 0.7, col = "blue")
+  par(mar=c(4,4.5,2,5))
+  plot(as.dendrogram(fit),hang=-1, main="Cluster Dendrogram for all Speeches", horiz=TRUE,nodePar = nodePar, edgePar = list(col = 2:3, lwd = 2:1))
+  group<-cutree(fit, k=4)
+#dev.off()
+```
+  
+  
+In the earlier half of the speeches, the cluster indicates that the Presidents are often preoccupied with the basic building blocks of a nation: "power", "constitution", "citizen", "duties", and "people". It seems that the Presidents are trying to steer the country to the right direction, and the future is less certain judging from the tone of the speeches.
+```{r warning=FALSE}  
+# first half
+dtms.firstHalf=removeSparseTerms(dtm.firstHalf,0.15)
+d=dist(t(dtms.firstHalf), method="euclidian")
+fit.firstHalf<-hclust(d=d,method="ward.D")
+
+#png(paste("../output/", "Cluster Dendrogram for First Half", ".png", sep=""), width=1500, height=1000)
+  par(mar=c(4,4.5,2,5))
+  nodePar <- list(lab.cex = 1, pch = c(NA, 19), cex = 0.7, col = "blue")
+  plot(as.dendrogram(fit.firstHalf),hang=-1, main="Cluster Dendrogram for First Half", horiz=TRUE,nodePar = nodePar, edgePar = list(col = 2:3, lwd = 2:1))
+  group<-cutree(fit.firstHalf, k=6)
+#dev.off()
+```
+
+
+  
+In the later half, with words such as "work", "life", "hope", "future", "time", it seems that the Presidents are trying to appeal to our everyday life and set up the image that life is good in America now and will continue to be this way into the future--future is more certain in this case, as long as people continue to behave.  
+```{r warning=FALSE}  
+# second half
+dtms.secondHalf=removeSparseTerms(dtm.secondHalf,0.15)
+d=dist(t(dtms.secondHalf), method="euclidian")
+fit.secondHalf<-hclust(d=d,method="ward.D")
+
+#png(paste("../output/", "Cluster Dendrogram for Second Half", ".png", sep=""), width=1500, height=1000)
+    par(mar=c(4,4.5,2,5))
+    nodePar <- list(lab.cex = 1, pch = c(NA, 19), cex = 0.7, col = "blue")
+    plot(as.dendrogram(fit.secondHalf),hang=-1, main="Cluster Dendrogram for Second Half", horiz=TRUE,nodePar = nodePar, edgePar = list(col = 2:3, lwd = 2:1))
+  group<-cutree(fit.secondHalf, k=6)
+#dev.off()
+
+
+
+```
+
+
+
+# Topic Modeling
+Topic model is a type of statistical model for discovering abstract "topics" in a set of documents. Below are the topics often discussed by the Democratic Presidents. In addition to the common topics such as "promise", "wisdom", and "peace", there are substantial differences in the two topic models. Note that the results are available in the output folder.
+
+
+The words "welfare" and "jobs" are unique to the Democratic topic model, and they conform to the view about the Democratic party is heavy on welfare. 
+```{r warning=FALSE}
+burnin = 4000
+iter=2000
+thin=500
+seed=list(1,1,1,1,1)
+nstart=5
+best=TRUE
+
+k=15
+
+ldaOut.democ=LDA(dtm.democ,k,method="Gibbs", control=list(nstart=nstart, seed=seed, best=best, burnin=burnin, iter=iter, thin=thin))
+
+# Write results to csv
+ldaOutdemoc.topics=as.matrix(topics(ldaOut.democ))
+table(c(1:k, ldaOutdemoc.topics))
+write.csv(ldaOutdemoc.topics, file=paste("../output/", "DocstoTopicsDemoc.csv"))
+
+#top 20 terms in each topic
+ldaOutdemoc.terms <- as.matrix(terms(ldaOut.democ,20))
+write.csv(ldaOutdemoc.terms,file=paste("../output/","TopicsToTermsDemoc.csv"))
+
+#probabilities associated with each topic assignment
+topicProbabilities <- as.data.frame(ldaOut.democ@gamma)
+write.csv(topicProbabilities,file=paste("../output/","TopicProbabilitiesDemoc.csv"))
+
+# Print out the topics
+termsdemoc.beta=ldaOut.democ@beta
+termsdemoc.beta=scale(termsdemoc.beta)
+topicsdemoc.terms=NULL
+for(i in 1:k)
+{
+  topicsdemoc.terms=rbind(topicsdemoc.terms, ldaOut.democ@terms[order(termsdemoc.beta[i,], decreasing = TRUE)[1:7]])
+}
+topicsdemoc.terms
+ldaOutdemoc.terms
+
+
+```
+
+
+
+The Republican Presidents place an emphasis on defense, as seen by words such as "army", "navy", and "weapons". Moreover, the party also has a stronger emphasis on "economy" and "business" than its Democratic counterpart. Lastly, the inclusion of "slave" in the topic model is unique to the Republican party. 
+```{r warning=FALSE}
+burnin = 4000
+iter=2000
+thin=500
+seed=list(1,1,1,1,1)
+nstart=5
+best=TRUE
+
+k=15
+
+ldaOut.repub=LDA(dtm.repub,k,method="Gibbs", control=list(nstart=nstart, seed=seed, best=best, burnin=burnin, iter=iter, thin=thin))
+
+# Write results to csv
+ldaOutrepub.topics=as.matrix(topics(ldaOut.repub))
+table(c(1:k, ldaOutrepub.topics))
+write.csv(ldaOutrepub.topics, file=paste("../output/", "DocstoTopicsRepub.csv"))
+
+#top 20 terms in each topic
+ldaOutrepub.terms <- as.matrix(terms(ldaOut.repub,20))
+write.csv(ldaOutrepub.terms,file=paste("../output/","TopicsToTermsRepub.csv"))
+
+#probabilities associated with each topic assignment
+topicProbabilities <- as.data.frame(ldaOut.repub@gamma)
+write.csv(topicProbabilities,file=paste("../output/","TopicProbabilitiesRepub.csv"))
+
+# Print out the topics
+termsrepub.beta=ldaOut.repub@beta
+termsrepub.beta=scale(termsrepub.beta)
+topicsrepub.terms=NULL
+for(i in 1:k)
+{
+  topicsrepub.terms=rbind(topicsrepub.terms, ldaOut.repub@terms[order(termsrepub.beta[i,], decreasing = TRUE)[1:7]])
+}
+topicsrepub.terms
+ldaOutrepub.terms
+
+
+```
+
+
+# Plotting Appearance of Certain Words on a Time Line
+
+As I have suspected, the word "constitution" is losing popularity among Presidents during inauguration.
+Moreover, it is interesting to note that certain words ("democracy", "peace") were constant, and then shoot up during a crisis such as WWII, and then came back down.
+
+```{r message=FALSE, warning=FALSE}
+
+#==============data downloads and prep========================
+# Create a vector of color
+parties <- c(None = "grey50", Federalist = "black", `Democratic-Republican` = "darkgreen",
+             Whig = "orange", Republican = "red", Democrat = "blue")
+
+
+# Get the Trump speech
+trump <- paste(readLines("https://raw.githubusercontent.com/ellisp/ellisp.github.io/source/data/trump_inauguration.txt"),
+               collapse = " ")
+trump_df <- data_frame(fulltext = trump,
+                       inauguration = "2017-Trump")
+
+# Tokenize
+inaugural <- data_frame(fulltext = data_char_inaugural,
+			inauguration = names(data_char_inaugural)) %>%
+   rbind(trump_df) %>%
+   mutate(year = as.numeric(str_sub(inauguration, 1, 4)),
+          president = str_sub(inauguration, start = 6)) %>%
+   unnest_tokens(word, fulltext, token = "words") %>%
+   group_by(inauguration) %>%
+   mutate(sequence = 1:n()) 
+
+# Count the number of occurances of word in each speech:
+words <- inaugural %>%
+   group_by(inauguration, word, year, president) %>%
+   summarise(count = n()) %>%
+   bind_tf_idf(word, inauguration, count) %>%
+   ungroup() 
+
+
+expect_equal(nrow(inaugural), sum(words$count))
+
+# Aggregate total count over all speeches
+all_usage <- words %>%
+   group_by(word) %>%
+   summarise(total_count = sum(count)) %>%
+   arrange(desc(total_count))
+
+expect_equal(sum(all_usage$total_count), sum(words$count))
+
+words <- words %>%
+   left_join(all_usage, by = "word")
+
+# Create a vector of all speeches
+inaugs <- unique(inaugural$inauguration)
+
+#=====================references to particular words================
+
+
+presidents <- read.csv("https://raw.githubusercontent.com/ellisp/ellisp.github.io/source/data/presidents.csv",
+                       skip = 3, stringsAsFactors = FALSE) %>%
+   filter(!is.na(year)) %>%
+   select(inauguration, party)
+
+annotations <- data_frame(word = c("constitution", "democracy", "peace", "free"),
+                          lab = c("Constitution exhibits a downward trend since the beginning:",
+                                  "First peaks at WWII with Roosevelt:",
+                                  "Constant then shoots up after WWII and came back down",
+                                  "First peaks during the cold war:"),
+                          y = c(2, .5, 0.4, 1.2) / 100
+)
+
+words %>%
+   mutate(word = ifelse(grepl("americ", word), "america", word),
+          word = ifelse(grepl("democra", word), "democracy", word),
+          word = ifelse(grepl("free", word), "free", word)) %>%
+   group_by(inauguration, president, year, word) %>%
+   summarise(count = sum(count)) %>% 
+   group_by(inauguration, president, year) %>%
+   mutate(relative_count = count / sum(count)) %>%
+   filter(word %in% c("constitution", "free", "democracy", "peace")) %>%
+   left_join(presidents, by = "inauguration") %>% 
+   ggplot(aes(x = year, y = relative_count, label = president)) +
+   geom_text(size = 3, aes(colour = party)) +
+   facet_wrap(~word, ncol = 1, scales = "free_y") +
+   ggtitle("Changing use of selected words in inaugural Presidential addresses",
+           "Presidents labelled if they used the word or a variant.") +
+   labs(x = "", y = "Number of times used as a percentage of all words") +
+   scale_colour_manual("", values = parties) +
+   scale_y_continuous(label = percent) +
+   geom_text(data = annotations, x = 1935, aes(y = y, label = lab), colour = "grey50", hjust = 1) +
+   theme(strip.text = element_text(size = 15, face = "bold"))
+```
+
+
+
+These wordclouds are created using tf-idf framework: the importance of a world is measured by its frequency in the document, however, if all documents in a corpus contain that word, then it becomes unimportant. Using tf-idf, these wordclouds are the most distinct words from the presidential inauguration speeches. They are available in the output folder.
+```{r}
+#=================wordcloud by tf-idf=================
+
+for(i in 1:length(inaugs)){
+
+   the_party <- presidents[presidents$inauguration == inaugs[[i]], "party"]   
+   
+   # create palette of colours, suitable for the particular party
+   palfun <- colorRampPalette(c("white", parties[the_party]))
+   
+   the_data <- subset(words, inauguration == inaugs[[i]]) %>%
+      arrange(desc(tf_idf)) %>%
+      slice(1:80) %>%
+      arrange(tf_idf) %>%
+      mutate(fading_colour = palfun(80))
+   
+   png(paste0("../output/", inaugs[[i]], ".png"), 1200, 1200, res = 100)
+   showtext.opts(dpi = 100)
+   par(family = "myfont")
+   wordcloud(the_data$word, 
+             freq = the_data$tf_idf * max(the_data$tf_idf)* 50, 
+             colors = the_data$fading_colour,
+             random.order = FALSE, random.color = FALSE, rot.per = 0)
+   title(main = inaugs[[i]])
+   grid.text(0.5, 0.05, label = "Most distinctive words (tf-idf) in all speeches",
+             gp = gpar(fontfamily = "myfont", color = "grey50"))
+   dev.off()
+}
+
+# tie the PNG frames together into a single animated GIF:
+system('magick -loop 0 -delay 200 *.png "distinctive-presid-words.gif"')
+```
+
+# Conclusion
+The presidential inauguration speeches may not be rich in content, but they are a gold mine for training a text mining program to pick up pattern; afterall, there are only so many things a president can talk in his/her inauguration, and the repetition allows the machine to learn, and then the unususal patterns and trends stand out. These unusual patterns often can be understood given the historical background; when there is not a simple explanation for the pattern, then we have found something *really* interesting.
