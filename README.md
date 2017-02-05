@@ -11,8 +11,10 @@ Term: Spring 2017
 + Projec title: What did the Presidents say at their inauguration?
 + This project is conducted by [Hongyi Zhu]
 
-+ Project summary: [a short summary] Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.
++ Project summary: In this project, I attempt to find interesting patterns and trends in Presidential Inauguration speeches by frequency analysis using the tools of text mining.
 
++ I have deleted some unnecessary files in this repository, and I have modified this read me file as of 2/4/2017.
++ Please note, the main project file is "project1markdown.rmd" in the DOC folder, which I have not touched since the due date of the project.
 Following [suggestions](http://nicercode.github.io/blog/2013-04-05-projects/) by [RICH FITZJOHN](http://nicercode.github.io/about/#Team) (@richfitz). This folder is orgarnized as follows.
 
 ```
