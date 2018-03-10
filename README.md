@@ -8,7 +8,7 @@ This is the first and only *individual* (as opposed to *team*) this semester.
 
 Term: Spring 2017
 
-+ Projec title: What did the Presidents say at their inauguration? by Hongyi Zhu
++ Projec title: What did the Presidents say at their inauguration? 
 
 + Project summary: In this project, I attempt to find interesting patterns and trends in Presidential Inauguration speeches by frequency analysis using the tools of text mining.
 
